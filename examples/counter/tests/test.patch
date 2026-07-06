@@ -1,0 +1,104 @@
+diff --git a/app/src/androidTest/java/com/example/counter/CounterScreenTest.kt b/app/src/androidTest/java/com/example/counter/CounterScreenTest.kt
+new file mode 100644
+index 0000000..963f783
+--- /dev/null
++++ b/app/src/androidTest/java/com/example/counter/CounterScreenTest.kt
+@@ -0,0 +1,31 @@
++package com.example.counter
++
++import androidx.compose.ui.test.junit4.createComposeRule
++import androidx.compose.ui.test.onNodeWithText
++import androidx.compose.ui.test.performClick
++import org.junit.Rule
++import org.junit.Test
++
++class CounterScreenTest {
++
++    @get:Rule
++    val composeTestRule = createComposeRule()
++
++    @Test
++    fun counter_incrementsAndDecrements() {
++        composeTestRule.setContent {
++            CounterScreen()
++        }
++
++        // Check initial state
++        composeTestRule.onNodeWithText("0").assertExists()
++
++        // Increment
++        composeTestRule.onNodeWithText("+1").performClick()
++        composeTestRule.onNodeWithText("1").assertExists()
++
++        // Decrement
++        composeTestRule.onNodeWithText("-1").performClick()
++        composeTestRule.onNodeWithText("0").assertExists()
++    }
++}
+diff --git a/app/src/test/java/com/example/counter/CounterViewModelTest.kt b/app/src/test/java/com/example/counter/CounterViewModelTest.kt
+new file mode 100644
+index 0000000..3fd421a
+--- /dev/null
++++ b/app/src/test/java/com/example/counter/CounterViewModelTest.kt
+@@ -0,0 +1,37 @@
++package com.example.counter
++
++import org.junit.Assert.assertEquals
++import org.junit.Test
++
++class CounterViewModelTest {
++
++    @Test
++    fun initialState_isZero() {
++        val viewModel = CounterViewModel()
++        assertEquals(0, viewModel.count.value)
++    }
++
++    @Test
++    fun increment_increasesCount() {
++        val viewModel = CounterViewModel()
++        viewModel.increment()
++        assertEquals(1, viewModel.count.value)
++    }
++
++    @Test
++    fun decrement_decreasesCount() {
++        val viewModel = CounterViewModel()
++        viewModel.decrement()
++        assertEquals(-1, viewModel.count.value)
++    }
++
++    @Test
++    fun multipleOperations_calculateCorrectly() {
++        val viewModel = CounterViewModel()
++        viewModel.increment()
++        viewModel.increment()
++        viewModel.decrement()
++        viewModel.increment()
++        assertEquals(2, viewModel.count.value)
++    }
++}
+diff --git a/app/src/test/java/com/example/counter/ExampleUnitTest.kt b/app/src/test/java/com/example/counter/ExampleUnitTest.kt
+deleted file mode 100644
+index b27a132..0000000
+--- a/app/src/test/java/com/example/counter/ExampleUnitTest.kt
++++ /dev/null
+@@ -1,17 +0,0 @@
+-package com.example.counter
+-
+-import org.junit.Test
+-
+-import org.junit.Assert.*
+-
+-/**
+- * Example local unit test, which will execute on the development machine (host).
+- *
+- * See [testing documentation](http://d.android.com/tools/testing).
+- */
+-class ExampleUnitTest {
+-    @Test
+-    fun addition_isCorrect() {
+-        assertEquals(4, 2 + 2)
+-    }
+-}
+\ No newline at end of file
