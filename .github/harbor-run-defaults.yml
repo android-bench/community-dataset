@@ -1,0 +1,2 @@
+# Harbor run defaults for task validation
+validate_env: docker

@@ -1,0 +1,93 @@
+title: "[Task Proposal]"
+labels: ["task-submission"]
+
+body:
+  - type: markdown
+    attributes:
+      value: "Thank you for proposing a new task! Please fill out the following details to help us understand and evaluate your proposal. Your task will be reviewed automatically before being reviewed by a human, so please be as specific and detailed as possible to ensure a smooth process."
+
+  - type: input
+    id: task_title
+    attributes:
+      label: Proposed Task Name
+      description: Provide a concise and descriptive name for the task you are proposing.
+      placeholder: "e.g., Fix Gradle Sync Failure in Multi-module Android Project"
+    validations:
+      required: true
+
+  - type: input
+    id: domain
+    attributes:
+      label: Domain
+      description: Specify the domain or sub-domain of Android development that this task falls under. This will help us categorize and evaluate the task appropriately.
+      placeholder: "[Build System | Security | NDK | Framework | UI | Testing | Performance | Linting | Other]"
+    validations:
+      required: true
+
+  - type: input
+    id: tags
+    attributes:
+      label: Tags
+      description: Provide relevant tags to help categorize and search for this task. You can include multiple tags separated by commas.
+      placeholder: "gradle, adb, multi-module, performance, compose, retrofit"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem_statement
+    attributes:
+      label: 1. Problem Statement
+      description: Describe the starting state, specific problem, and any linked repository.
+      placeholder: |
+        - Task: What specific problem must the agent solve?
+        - Linked repository: What repository are you basing the task on, if any?
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment_constraints
+    attributes:
+      label: 2. Android Environment & Constraints (Optional)
+      description: Fill any of the known information that might be helpful.
+      placeholder: |
+        - Target SDK & Min SDK: [e.g., 34 / 24]
+        - Build Tools: [e.g., Gradle 8.5 / AGP 8.2 / NDK 26.x]
+        - Execution Environment: [Robolectric (JVM) | Headless Emulator | Static Analysis | Native Binary]
+        - Workspace Complexity: [e.g., Single-module app | Multi-module monorepo | Library project]
+        - Resource Limits: [e.g., 8GB RAM, 10GB Disk]
+        - Network: Is internet access required for Gradle sync? (Note: Sync should ideally be pre-cached).
+        - Required libraries: [e.g., Retrofit, OkHttp, Room, Hilt/Dagger, Jetpack Compose, Coil/Glide, WorkManager]
+    validations:
+      required: false
+
+  - type: textarea
+    id: solution_plan
+    attributes:
+      label: 3. Reference Solution Plan
+      description: Outline the high-level approach (inputs, steps to solve, outputs) and key components/files impacted.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification_strategy
+    attributes:
+      label: 4. Verification & Strategy
+      description: How will you verify the solution? Include known flakiness mitigation and cheating prevention.
+    validations:
+      required: true
+
+  - type: textarea
+    id: complexity_difficulty
+    attributes:
+      label: 5. Complexity & Difficulty
+      description: Why is this hard? How long would it take an expert to solve?  Are there any areas in which you expect models to struggle?
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_information
+    attributes:
+      label: 6. Additional Information (Optional)
+      description: Provide any other context, references, or details that might be helpful.
+    validations:
+      required: false

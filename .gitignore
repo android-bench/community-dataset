@@ -1,0 +1,29 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Various IDEs
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+.zed
+.claude
+
+# Log files
+*.log
+out
+
+tasks/*.jsonl
+
+trials/
+
+# Python build artifacts
+*.egg-info/
+__pycache__/
+*.pyc

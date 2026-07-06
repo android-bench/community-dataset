@@ -1,0 +1,400 @@
+diff --git a/.idea/misc.xml b/.idea/misc.xml
+index a4f09e2..74dd639 100644
+--- a/.idea/misc.xml
++++ b/.idea/misc.xml
+@@ -1,7 +1,7 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <project version="4">
+   <component name="ExternalStorageConfigurationManager" enabled="true" />
+-  <component name="ProjectRootManager" version="2" languageLevel="JDK_21" project-jdk-name="jbr-21" project-jdk-type="JavaSDK">
++  <component name="ProjectRootManager" version="2" languageLevel="JDK_21" default="true" project-jdk-name="jbr-21" project-jdk-type="JavaSDK">
+     <output url="file://$PROJECT_DIR$/build/classes" />
+   </component>
+   <component name="ProjectType">
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 1abc6a3..9fe08f9 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -1,43 +1,68 @@
+ plugins {
+     alias(libs.plugins.android.application)
++    alias(libs.plugins.compose.compiler)
+ }
+ 
+ android {
+     namespace = "com.example.counter"
+-    compileSdk {
+-        version = release(36) {
+-            minorApiLevel = 1
+-        }
+-    }
++    compileSdk = 35
+ 
+     defaultConfig {
+         applicationId = "com.example.counter"
+         minSdk = 24
+-        targetSdk = 36
++        targetSdk = 35
+         versionCode = 1
+         versionName = "1.0"
+ 
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
++        vectorDrawables {
++            useSupportLibrary = true
++        }
+     }
+ 
+     buildTypes {
+         release {
+-            optimization {
+-                enable = false
+-            }
++            isMinifyEnabled = false
++            proguardFiles(
++                getDefaultProguardFile("proguard-android-optimize.txt"),
++                "proguard-rules.pro"
++            )
+         }
+     }
+     compileOptions {
+-        sourceCompatibility = JavaVersion.VERSION_11
+-        targetCompatibility = JavaVersion.VERSION_11
++        sourceCompatibility = JavaVersion.VERSION_1_8
++        targetCompatibility = JavaVersion.VERSION_1_8
++    }
++    buildFeatures {
++        compose = true
++    }
++    composeOptions {
++        kotlinCompilerExtensionVersion = "1.5.8"
++    }
++    packaging {
++        resources {
++            excludes += "/META-INF/{AL2.0,LGPL2.1}"
++        }
+     }
+ }
+ 
+ dependencies {
+-    implementation(libs.androidx.appcompat)
+     implementation(libs.androidx.core.ktx)
++    implementation(libs.androidx.lifecycle.runtime.ktx)
++    implementation(libs.androidx.activity.compose)
++    implementation(platform(libs.androidx.compose.bom))
++    implementation(libs.androidx.ui)
++    implementation(libs.androidx.ui.graphics)
++    implementation(libs.androidx.ui.tooling.preview)
++    implementation(libs.androidx.material3)
++    implementation(libs.androidx.lifecycle.viewmodel.compose)
+     implementation(libs.material)
++    
+     testImplementation(libs.junit)
+-    androidTestImplementation(libs.androidx.espresso.core)
+     androidTestImplementation(libs.androidx.junit)
++    androidTestImplementation(libs.androidx.espresso.core)
++    androidTestImplementation(platform(libs.androidx.compose.bom))
++    androidTestImplementation(libs.androidx.ui.test.junit4)
++    debugImplementation(libs.androidx.ui.tooling)
++    debugImplementation(libs.androidx.ui.test.manifest)
+ }
+\ No newline at end of file
+diff --git a/app/src/androidTest/java/com/example/counter/CounterScreenTest.kt b/app/src/androidTest/java/com/example/counter/CounterScreenTest.kt
+new file mode 100644
+index 0000000..963f783
+--- /dev/null
++++ b/app/src/androidTest/java/com/example/counter/CounterScreenTest.kt
+@@ -0,0 +1,31 @@
++package com.example.counter
++
++import androidx.compose.ui.test.junit4.createComposeRule
++import androidx.compose.ui.test.onNodeWithText
++import androidx.compose.ui.test.performClick
++import org.junit.Rule
++import org.junit.Test
++
++class CounterScreenTest {
++
++    @get:Rule
++    val composeTestRule = createComposeRule()
++
++    @Test
++    fun counter_incrementsAndDecrements() {
++        composeTestRule.setContent {
++            CounterScreen()
++        }
++
++        // Check initial state
++        composeTestRule.onNodeWithText("0").assertExists()
++
++        // Increment
++        composeTestRule.onNodeWithText("+1").performClick()
++        composeTestRule.onNodeWithText("1").assertExists()
++
++        // Decrement
++        composeTestRule.onNodeWithText("-1").performClick()
++        composeTestRule.onNodeWithText("0").assertExists()
++    }
++}
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index c75f7eb..bfa622f 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -10,6 +10,17 @@
+         android:label="@string/app_name"
+         android:roundIcon="@mipmap/ic_launcher_round"
+         android:supportsRtl="true"
+-        android:theme="@style/Theme.Counter" />
++        android:theme="@style/Theme.Counter" >
++        
++        <activity
++            android:name=".MainActivity"
++            android:exported="true">
++            <intent-filter>
++                <action android:name="android.intent.action.MAIN" />
++                <category android:name="android.intent.category.LAUNCHER" />
++            </intent-filter>
++        </activity>
++        
++    </application>
+ 
+ </manifest>
+\ No newline at end of file
+diff --git a/app/src/main/java/com/example/counter/CounterScreen.kt b/app/src/main/java/com/example/counter/CounterScreen.kt
+new file mode 100644
+index 0000000..83d900b
+--- /dev/null
++++ b/app/src/main/java/com/example/counter/CounterScreen.kt
+@@ -0,0 +1,61 @@
++package com.example.counter
++
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.width
++import androidx.compose.material3.Button
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Scaffold
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.getValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.unit.dp
++import androidx.lifecycle.viewmodel.compose.viewModel
++
++@Composable
++fun CounterScreen(
++    modifier: Modifier = Modifier,
++    viewModel: CounterViewModel = viewModel()
++) {
++    val count by viewModel.count.collectAsState()
++
++    Scaffold { innerPadding ->
++        Column(
++            modifier = modifier
++                .fillMaxSize()
++                .padding(innerPadding)
++                .padding(16.dp),
++            horizontalAlignment = Alignment.CenterHorizontally
++        ) {
++            Spacer(modifier = Modifier.weight(1f))
++            
++            Text(
++                text = count.toString(),
++                style = MaterialTheme.typography.displayLarge
++            )
++            
++            Spacer(modifier = Modifier.weight(1f))
++            
++            Row(
++                modifier = Modifier.fillMaxWidth(),
++                horizontalArrangement = Arrangement.SpaceEvenly
++            ) {
++                Button(onClick = { viewModel.decrement() }) {
++                    Text(text = "-1")
++                }
++                
++                Button(onClick = { viewModel.increment() }) {
++                    Text(text = "+1")
++                }
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/com/example/counter/CounterViewModel.kt b/app/src/main/java/com/example/counter/CounterViewModel.kt
+new file mode 100644
+index 0000000..7f6a284
+--- /dev/null
++++ b/app/src/main/java/com/example/counter/CounterViewModel.kt
+@@ -0,0 +1,19 @@
++package com.example.counter
++
++import androidx.lifecycle.ViewModel
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.asStateFlow
++
++class CounterViewModel : ViewModel() {
++    private val _count = MutableStateFlow(0)
++    val count: StateFlow<Int> = _count.asStateFlow()
++
++    fun increment() {
++        _count.value += 1
++    }
++
++    fun decrement() {
++        _count.value -= 1
++    }
++}
+diff --git a/app/src/main/java/com/example/counter/MainActivity.kt b/app/src/main/java/com/example/counter/MainActivity.kt
+new file mode 100644
+index 0000000..e0c2d48
+--- /dev/null
++++ b/app/src/main/java/com/example/counter/MainActivity.kt
+@@ -0,0 +1,19 @@
++package com.example.counter
++
++import android.os.Bundle
++import androidx.activity.ComponentActivity
++import androidx.activity.compose.setContent
++import androidx.activity.enableEdgeToEdge
++import androidx.compose.material3.MaterialTheme
++
++class MainActivity : ComponentActivity() {
++    override fun onCreate(savedInstanceState: Bundle?) {
++        super.onCreate(savedInstanceState)
++        enableEdgeToEdge()
++        setContent {
++            MaterialTheme {
++                CounterScreen()
++            }
++        }
++    }
++}
+diff --git a/app/src/test/java/com/example/counter/CounterViewModelTest.kt b/app/src/test/java/com/example/counter/CounterViewModelTest.kt
+new file mode 100644
+index 0000000..3fd421a
+--- /dev/null
++++ b/app/src/test/java/com/example/counter/CounterViewModelTest.kt
+@@ -0,0 +1,37 @@
++package com.example.counter
++
++import org.junit.Assert.assertEquals
++import org.junit.Test
++
++class CounterViewModelTest {
++
++    @Test
++    fun initialState_isZero() {
++        val viewModel = CounterViewModel()
++        assertEquals(0, viewModel.count.value)
++    }
++
++    @Test
++    fun increment_increasesCount() {
++        val viewModel = CounterViewModel()
++        viewModel.increment()
++        assertEquals(1, viewModel.count.value)
++    }
++
++    @Test
++    fun decrement_decreasesCount() {
++        val viewModel = CounterViewModel()
++        viewModel.decrement()
++        assertEquals(-1, viewModel.count.value)
++    }
++
++    @Test
++    fun multipleOperations_calculateCorrectly() {
++        val viewModel = CounterViewModel()
++        viewModel.increment()
++        viewModel.increment()
++        viewModel.decrement()
++        viewModel.increment()
++        assertEquals(2, viewModel.count.value)
++    }
++}
+diff --git a/app/src/test/java/com/example/counter/ExampleUnitTest.kt b/app/src/test/java/com/example/counter/ExampleUnitTest.kt
+deleted file mode 100644
+index b27a132..0000000
+--- a/app/src/test/java/com/example/counter/ExampleUnitTest.kt
++++ /dev/null
+@@ -1,17 +0,0 @@
+-package com.example.counter
+-
+-import org.junit.Test
+-
+-import org.junit.Assert.*
+-
+-/**
+- * Example local unit test, which will execute on the development machine (host).
+- *
+- * See [testing documentation](http://d.android.com/tools/testing).
+- */
+-class ExampleUnitTest {
+-    @Test
+-    fun addition_isCorrect() {
+-        assertEquals(4, 2 + 2)
+-    }
+-}
+\ No newline at end of file
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 3756278..f3d990d 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -1,4 +1,6 @@
+ // Top-level build file where you can add configuration options common to all sub-projects/modules.
+ plugins {
+     alias(libs.plugins.android.application) apply false
+-}
+\ No newline at end of file
++    alias(libs.plugins.kotlin.android) apply false
++    alias(libs.plugins.compose.compiler) apply false
++}
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index f634258..0cf697d 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -1,11 +1,16 @@
+ [versions]
+ agp = "9.3.0-alpha04"
++kotlin = "2.0.21"
+ coreKtx = "1.10.1"
+ junit = "4.13.2"
+ junitVersion = "1.1.5"
+ espressoCore = "3.5.1"
+ appcompat = "1.6.1"
+ material = "1.10.0"
++lifecycleRuntimeKtx = "2.7.0"
++activityCompose = "1.8.2"
++composeBom = "2024.02.00"
++lifecycleViewmodelCompose = "2.7.0"
+ 
+ [libraries]
+ androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+@@ -14,7 +19,19 @@ androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "j
+ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+ androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+ material = { group = "com.google.android.material", name = "material", version.ref = "material" }
++androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
++androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
++androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
++androidx-ui = { group = "androidx.compose.ui", name = "ui" }
++androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
++androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
++androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
++androidx-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
++androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
++androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
++androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
+ 
+ [plugins]
+ android-application = { id = "com.android.application", version.ref = "agp" }
+-
++kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
++compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
