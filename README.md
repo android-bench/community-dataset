@@ -1,16 +1,16 @@
 Android Bench is a benchmark for evaluating Large Language Models (LLMs) on tasks specific for Android development.
 
-This repository aims to gather even more challenging tasks to further evolve LLMs abilities and help developers in Android agentic development.
+We are continuously refining and creating new tasks, and this repository aims to gather even more challenging tasks to further evolve LLMs abilities and help developers in Android agentic development.
 
 We are looking for complex, realistic tasks, especially those that are a common pitfall for the Android Developers. More about what are we looking for in a task can be found in [task-guideline.md](docs/task-guideline.md)
 
 To ensure smooth and easy setup up Android Bench is using [Harbor framework](https://www.harborframework.com/).
 
 > [!IMPORTANT]
-> For the current version of the contributions we do not guarantee that the tasks will be merged into the official Android Bench dataset.
+> We will be reviewing submissions, but do not guarantee that the tasks will be merged into the official Android Bench dataset.
 
 # Contributing
-We are currently looking for new tasks to enhance our database!
+We are sharing an opportunity for you to contribute your own tasks to the benchmark. This gives you a chance to let us know which tasks and unique use cases are important for your workflow, so we can represent it within the benchmark.
 
 Interested in the process? You can read our guide in [CONTRIBUTING.md](CONTRIBUTING.md)
 
