@@ -58,6 +58,26 @@ Install [Docker](https://www.docker.com/products/docker-desktop/), verify it is 
 ```
 docker ps
 ```
+#### 3. Install Dataset V2 CLI (`v2.task`).
+The `v2.task` CLI provides tools for creating task structure, building Docker containers, refreshing patch goldens, and verifying Dataset V2 tasks.
+
+Install the repository tools using `uv`:
+```bash
+uv pip install -e .
+```
+Or run the CLI directly without installation:
+```bash
+uv run v2.task --help
+```
+
+Available subcommands:
+* `v2.task create`: Interactive wizard (or manual flags) to scaffold fresh tasks.
+* `v2.task docker`: Generate Dockerfiles and build container layers.
+* `v2.task refresh-patches`: Calculate canonical solution and test patches.
+* `v2.task verify-tests`: Determine task test results inside Docker containers.
+
+For detailed subcommand parameters and advanced workflows, see [v2/README.md](v2/README.md).
+
 ### Setup task environment
 Fork the repository you want to work on or create your own repository that will be used for task implementation.
 
@@ -76,8 +96,12 @@ cd community-dataset
 ```
 git checkout -b <branch-name>
 ```
-#### 2. Initialize the task with harbor.
-Use the following command to initialize the task.
+#### 2. Initialize the task.
+Scaffold a Dataset V2 task using the interactive CLI wizard:
+```
+uv run v2.task create
+```
+Or initialize directly with Harbor:
 ```
 harbor tasks init <task-name> --include-canary-strings --metadata-template task-template.toml -p tasks/
 ```

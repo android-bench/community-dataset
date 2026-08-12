@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "android-bench-community"
+version = "0.1.0"
+description = "Android Bench Community Evaluation Tasks & Tools"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "PyYAML",
+    "rich",
+    "tomli_w",
+    "tomli; python_version < '3.11'",
+    "harbor>=0.20.0",
+]
+
+[project.scripts]
+"v2.task" = "v2.task:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
