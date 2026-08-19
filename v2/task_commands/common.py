@@ -27,7 +27,7 @@ import shutil
 import subprocess
 import tomllib
 import tomli_w
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import yaml
 
 from rich.console import Console
@@ -233,9 +233,9 @@ def setup_repo(task_dir: str, silent: bool = False) -> Optional[bool]:
             )
         return False
 
-    if not is_private_repo(repo_url, data):
-        return True
-
+    # Public repos are cloned inside the Dockerfile rather than copied from the build context,
+    # but refresh-patches and verify-tests still diff before against after locally, so every
+    # task needs the staged clone regardless of visibility.
     target_path = get_staged_repo_dir(task_dir)
     target_dir = os.path.relpath(target_path, task_dir)
 
@@ -510,27 +510,142 @@ def get_git_history_exclusions(task_data: Dict[str, Any]) -> List[str]:
     return res
 
 
+# ---------------------------------------------------------------------------
+# Local commit sources
+#
+# The after state is deliberately never published: the before commit is public,
+# and the fix ships only as solution/solution.patch in the dataset repo, behind the
+# canary. refresh-patches still has to diff before against after, so it needs the
+# after commit in the staged clone, fetched from a clone on the author's machine.
+# ---------------------------------------------------------------------------
+
+LOCAL_SOURCE_MEMO = ".local-source"
+LOCAL_SOURCE_ENV = "ANDROID_BENCH_LOCAL_SOURCE"
+LOCAL_REF_NAMESPACE = "refs/local-source"
+
+_CLI_LOCAL_SOURCES: List[str] = []
+
+
+def configure_local_sources(paths: Optional[List[str]]) -> None:
+    """Records --local-source paths for this run."""
+    global _CLI_LOCAL_SOURCES
+    _CLI_LOCAL_SOURCES = [p for p in (paths or []) if p]
+
+
+def get_local_sources(t_path: Path) -> List[str]:
+    """Local repositories to look in, most explicit first: CLI, env, per-task memo."""
+    sources: List[str] = list(_CLI_LOCAL_SOURCES)
+    env_value = os.environ.get(LOCAL_SOURCE_ENV, "")
+    sources.extend(p for p in env_value.split(os.pathsep) if p.strip())
+
+    memo = Path(t_path) / LOCAL_SOURCE_MEMO
+    if memo.is_file():
+        try:
+            sources.extend(
+                line.strip()
+                for line in memo.read_text().splitlines()
+                if line.strip() and not line.startswith("#")
+            )
+        except Exception:
+            pass
+
+    seen, unique = set(), []
+    for src in sources:
+        expanded = os.path.expanduser(src)
+        if expanded not in seen:
+            seen.add(expanded)
+            unique.append(expanded)
+    return unique
+
+
+def remember_local_source(t_path: Path, source: str) -> None:
+    """Persists a working source so later runs need no flag. The memo is gitignored."""
+    memo = Path(t_path) / LOCAL_SOURCE_MEMO
+    existing = (
+        [l.strip() for l in memo.read_text().splitlines() if l.strip()]
+        if memo.is_file()
+        else []
+    )
+    if source in existing:
+        return
+    try:
+        memo.write_text(
+            "# Local clones holding commits that are not published. Not committed.\n"
+            + "\n".join(existing + [source])
+            + "\n"
+        )
+    except Exception:
+        pass
+
+
+def fetch_from_local_sources(
+    repo_path: Path, t_path: Path, commit_exists: Callable[[str], bool], missing: List[str]
+) -> bool:
+    """Fetches missing commits from a local clone into the staged repository."""
+    sources = get_local_sources(t_path)
+    if not sources:
+        return False
+
+    for source in sources:
+        if not os.path.isdir(source):
+            print_step_msg(f"Local source not found, skipping: {source}")
+            continue
+        print_step_msg(f"Fetching missing commit(s) from {source}...")
+        result = subprocess.run(
+            [
+                "git",
+                "fetch",
+                "--no-tags",
+                source,
+                f"+refs/heads/*:{LOCAL_REF_NAMESPACE}/*",
+            ],
+            cwd=repo_path,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            print_step_msg(f"Fetch from {source} failed: {result.stderr.strip()[:200]}")
+            continue
+        if all(commit_exists(sha) for sha in missing):
+            remember_local_source(t_path, source)
+            return True
+
+    return False
+
+
 def ensure_commits_exist(
     repo_path: Path,
     t_path: Path,
     before_sha: str,
     after_sha: Optional[str] = None,
 ) -> bool:
-    """Ensures repository exists and fetches updates if target commits are missing locally."""
-    if repo_path.is_dir():
-        if not ensure_standard_git_ref_format(repo_path):
-            print_info_panel(
-                f"[{t_path.name}] Reftable format detected in {repo_path}. Re-cloning with files format for Docker compatibility...",
-                title="Git Staging",
-            )
-            return bool(setup_repo(str(t_path)))
+    """Ensures the staged clone exists and holds both target commits.
+
+    The before commit comes from origin. The after commit is deliberately never published --
+    it ships only as solution/solution.patch in the dataset -- so when it is missing it is
+    fetched from a local clone named by --local-source, the .local-source memo, or
+    ANDROID_BENCH_LOCAL_SOURCE.
+    """
+    if repo_path.is_dir() and not ensure_standard_git_ref_format(repo_path):
+        print_info_panel(
+            f"[{t_path.name}] Reftable format detected in {repo_path}. Re-cloning with files format for Docker compatibility...",
+            title="Git Staging",
+        )
+        if not setup_repo(str(t_path)):
+            return False
 
     if not repo_path.is_dir():
         print_info_panel(
             f"[{t_path.name}] Cloned repository not detected. Running setup_repo...",
             title="Git Staging",
         )
-        return bool(setup_repo(str(t_path)))
+        if not setup_repo(str(t_path)) or not repo_path.is_dir():
+            print_error_panel(
+                f"[{t_path.name}] No repository staged at {repo_path}. "
+                "Run `v2.task docker <task-id> --no-generate --no-build` to clone it."
+            )
+            return False
 
     def commit_exists(ref: str) -> bool:
         if not ref or ref == "HEAD":
@@ -545,14 +660,46 @@ def ensure_commits_exist(
             == 0
         )
 
-    if not (commit_exists(before_sha) and (not after_sha or commit_exists(after_sha))):
+    def still_missing() -> List[str]:
+        return [
+            sha for sha in (before_sha, after_sha) if sha and not commit_exists(sha)
+        ]
+
+    missing = still_missing()
+    if missing:
         print_info_panel(
             f"[{t_path.name}] Target commit(s) on {repo_path} missing locally. Fetching from origin...",
             title="Git Staging",
         )
-        return bool(setup_repo(str(t_path)))
+        if not setup_repo(str(t_path)):
+            return False
+        missing = still_missing()
+
+    if missing and fetch_from_local_sources(repo_path, t_path, commit_exists, missing):
+        missing = still_missing()
+
+    if missing:
+        print_error_panel(
+            f"[{t_path.name}] Commit(s) not in {repo_path}: {', '.join(missing)}\n"
+            "The after state is never published, so it has to come from a local clone:\n"
+            f"  v2.task refresh-patches {t_path.name} --local-source /path/to/local/repo\n"
+            f"The path is remembered in {t_path}/{LOCAL_SOURCE_MEMO} "
+            f"(gitignored), or set {LOCAL_SOURCE_ENV}."
+        )
+        return False
 
     return True
+
+
+def leading_comment_block(text: str) -> str:
+    """Returns the run of comment lines at the top of a file, including its trailing newline."""
+    kept = []
+    for line in text.splitlines():
+        if line.startswith("#"):
+            kept.append(line)
+        else:
+            break
+    return "".join(f"{line}\n" for line in kept)
 
 
 def reformat_task_toml(task_dir: Path) -> None:
@@ -579,9 +726,11 @@ def reformat_task_toml(task_dir: Path) -> None:
             if isinstance(v, dict) and k != "task":
                 ordered_data[k] = v
 
-        toml_text = tomli_w.dumps(ordered_data)
-
         existing_text = task_toml.read_text(encoding="utf-8")
+        # tomli_w drops comments, and the two lines at the top of every task file are the
+        # training-corpus canary that CI checks for. Carry the leading comment block over.
+        toml_text = leading_comment_block(existing_text) + tomli_w.dumps(ordered_data)
+
         if existing_text != toml_text:
             task_toml.write_text(toml_text, encoding="utf-8")
             logger.info(f"[{task_dir.name}] Reformatted task.toml")

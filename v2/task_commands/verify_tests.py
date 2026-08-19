@@ -40,6 +40,7 @@ from rich.table import Table
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 from v2.task_commands.common import (
+    leading_comment_block,
     DEFAULT_DATASET_DIR,
     add_common_task_args,
     discover_tasks,
@@ -93,8 +94,9 @@ def update_spec_toml(task_path: Path, f2p_list: List[str], p2p_list: List[str]) 
         data["acceptance_criteria"]["fail_to_pass"] = f2p_list
         data["acceptance_criteria"]["pass_to_pass"] = p2p_list
 
-        toml_text = tomli_w.dumps(data)
-        spec_toml.write_text(toml_text, encoding="utf-8")
+        # tomli_w drops comments; spec.toml's first two lines are the canary CI checks for.
+        header = leading_comment_block(spec_toml.read_text(encoding="utf-8"))
+        spec_toml.write_text(header + tomli_w.dumps(data), encoding="utf-8")
         return True
     except Exception as e:
         print_error_panel(f"[{task_path.name}] Failed to update tests/spec.toml: {e}")

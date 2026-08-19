@@ -37,6 +37,7 @@ from v2.task_commands.common import (
     DEFAULT_DATASET_DIR,
     add_common_task_args,
     discover_tasks,
+    configure_local_sources,
     ensure_commits_exist,
     get_git_history_exclusions,
     get_staged_repo_dir,
@@ -730,6 +731,22 @@ def generate_canonical_patches(
     return True
 
 
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    """Registers refresh-patches CLI flags."""
+    add_common_task_args(parser)
+    parser.add_argument(
+        "--local-source",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help=(
+            "Local clone holding commits that are not published (the after state). "
+            "Repeatable. Remembered per task in .local-source; "
+            "ANDROID_BENCH_LOCAL_SOURCE also works."
+        ),
+    )
+
+
 def main(args: Optional[argparse.Namespace] = None) -> None:
     if args is None:
         parser = argparse.ArgumentParser(
@@ -738,6 +755,8 @@ def main(args: Optional[argparse.Namespace] = None) -> None:
         add_common_task_args(parser)
 
         args = parser.parse_args()
+
+    configure_local_sources(getattr(args, "local_source", None))
 
     dataset_root: Path = getattr(
         args,

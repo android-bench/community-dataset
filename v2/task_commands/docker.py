@@ -50,6 +50,7 @@ from v2.task_commands.common import (
     ensure_standard_git_ref_format,
     get_staged_repo_dir,
     is_private_repo,
+    leading_comment_block,
     setup_repo,
     reformat_task_toml,
 )
@@ -58,9 +59,152 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger("v2_docker")
 
 
+# Image prefix for tasks built from this repository. Override with DOCKER_REGISTRY.
+DEFAULT_DOCKER_REGISTRY = "community-dataset"
+# Where the prebuilt private base images live, independent of where task images are tagged.
+ANDROID_BENCH_REGISTRY = "android-bench"
+
+
 def get_docker_registry() -> str:
-    """Returns the target container registry prefix (default: android-bench)."""
-    return os.environ.get("DOCKER_REGISTRY", "android-bench").strip().rstrip("/")
+    """Returns the target container registry prefix (default: community-dataset)."""
+    return (
+        os.environ.get("DOCKER_REGISTRY", DEFAULT_DOCKER_REGISTRY).strip().rstrip("/")
+    )
+
+
+# Public base image plus the toolchain the generated Dockerfile installs on top of it.
+# android-bench-env lives in a private registry, so it cannot be the default here.
+PUBLIC_BASE_IMAGE = "ubuntu:22.04"
+ANDROID_CMDLINE_TOOLS_VERSION = "11076708"
+DEFAULT_TARGET_SDK = 35
+DEFAULT_MEMORY_MB = 8192
+
+# aapt2 ships x86_64-only for Linux, the emulator system images are x86_64, and the JAVA_HOME
+# written below resolves to the -amd64 JDK path. Without this pin an arm64 host (Apple Silicon)
+# produces java-<ver>-openjdk-arm64 and sdkmanager exits 1.
+DEFAULT_BUILD_PLATFORM = "linux/amd64"
+
+
+def get_default_base_image() -> str:
+    """Base image for generated Dockerfiles.
+
+    Defaults to a public Ubuntu image, on top of which the generated Dockerfile installs the
+    JDK and Android SDK itself. Set ANDROID_BENCH_BASE_IMAGE=android-bench-env to build against
+    the prebuilt android-bench base instead (requires access to the private registry).
+    """
+    return os.environ.get("ANDROID_BENCH_BASE_IMAGE", PUBLIC_BASE_IMAGE).strip()
+
+
+def get_build_platform() -> str:
+    """Platform pinned on FROM lines. Set ANDROID_BENCH_PLATFORM='' to omit the pin."""
+    return os.environ.get("ANDROID_BENCH_PLATFORM", DEFAULT_BUILD_PLATFORM).strip()
+
+
+def from_line(image_tag: str) -> str:
+    platform = get_build_platform()
+    if platform:
+        return f"FROM --platform={platform} {image_tag}\n"
+    return f"FROM {image_tag}\n"
+
+
+def parse_memory_to_mb(value: Any) -> Optional[int]:
+    """Parses a memory declaration into MB. Accepts "12G", "512M", "8Gi" or a bare MB number."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    match = re.match(
+        r"^(\d+(?:\.\d+)?)\s*([kmgt]?)i?b?$", str(value).strip().lower()
+    )
+    if not match:
+        return None
+    multipliers = {"": 1.0, "k": 1 / 1024, "m": 1.0, "g": 1024.0, "t": 1024.0 * 1024}
+    return int(float(match.group(1)) * multipliers[match.group(2)])
+
+
+def get_declared_memory_mb(task_data: Dict[str, Any]) -> int:
+    """Container memory in MB.
+
+    `v2.task create` and task-template.toml write `memory = "72G"`; older tasks carry
+    `memory_mb = 8192`. Both spellings have to resolve, or the JVM sizing below silently
+    falls back to the default and the container is misconfigured.
+    """
+    env_cfg = task_data.get("environment", {}) or {}
+    for key in ("memory", "memory_mb"):
+        parsed = parse_memory_to_mb(env_cfg.get(key))
+        if parsed:
+            return parsed
+    return DEFAULT_MEMORY_MB
+
+
+def gradle_opts_line(task_data: Dict[str, Any]) -> str:
+    """GRADLE_OPTS heap for the Gradle client JVM.
+
+    GRADLE_OPTS sizes the launcher, not the daemon that does the work (see
+    gradle_memory_properties), and the launcher only parses arguments and relays logs. The old
+    fixed -Xmx6g gave a near-idle process a ceiling that, added to the daemon and Kotlin daemon
+    ceilings, oversubscribed the container.
+    """
+    return f'ENV GRADLE_OPTS="-Xmx{max(1024, get_declared_memory_mb(task_data) // 8)}m"\n'
+
+
+def gradle_memory_properties(task_data: Dict[str, Any]) -> str:
+    """Caps the Gradle and Kotlin daemon heaps to fit the memory the task declares.
+
+    A project's own gradle.properties is written for a developer laptop and routinely asks for
+    more than the container has (this dataset's typical 8 GB). org.gradle.jvmargs there beats
+    GRADLE_OPTS, so the daemon starts oversized, the Kotlin daemon starts beside it, and the
+    kernel kills one of them mid-build. GRADLE_USER_HOME/gradle.properties takes precedence over
+    the project file and sits outside the testbed, so it is invisible to the agent.
+    """
+    memory_mb = get_declared_memory_mb(task_data)
+    daemon_mb = max(1536, int(memory_mb * 0.40))
+    kotlin_mb = max(1024, int(memory_mb * 0.20))
+    return (
+        "RUN mkdir -p /root/.gradle && \\\n"
+        f"    echo 'org.gradle.jvmargs=-Xmx{daemon_mb}m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8' > /root/.gradle/gradle.properties && \\\n"
+        f"    echo 'kotlin.daemon.jvmargs=-Xmx{kotlin_mb}m' >> /root/.gradle/gradle.properties\n"
+    )
+
+
+def gradle_wrapper_prefetch(build_commands: List[str]) -> str:
+    """Downloads the Gradle distribution in its own layer, with retries.
+
+    The wrapper aborts on a stalled read (networkTimeout, 10s by default) and does not resume,
+    so a slow link kills the whole build layer after minutes of work. Fetching it separately
+    keeps the retry cheap and the distribution cached.
+    """
+    if not any("./gradlew" in (c or "") for c in build_commands):
+        return ""
+    return (
+        "RUN for attempt in 1 2 3 4 5; do \\\n"
+        "        ./gradlew --version && exit 0; \\\n"
+        '        echo "Gradle distribution download failed (attempt $attempt), retrying"; \\\n'
+        "        sleep 15; \\\n"
+        "    done; exit 1\n"
+    )
+
+
+def android_toolchain_script(java_ver: Any, target_sdk: Any) -> str:
+    """Dockerfile lines installing the JDK and Android SDK on a bare public base image."""
+    sdk = str(target_sdk or DEFAULT_TARGET_SDK)
+    return (
+        "ENV DEBIAN_FRONTEND=noninteractive\n"
+        "RUN apt-get update && \\\n"
+        "    apt-get install -y --no-install-recommends \\\n"
+        "    python3 python3-pip git wget unzip curl ca-certificates libglu1-mesa \\\n"
+        f"    openjdk-{java_ver}-jdk \\\n"
+        "    && apt-get clean && rm -rf /var/lib/apt/lists/*\n"
+        "ENV ANDROID_HOME=/opt/android-sdk\n"
+        "ENV PATH=${PATH}:${JAVA_HOME}/bin:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools\n"
+        "RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \\\n"
+        f'    wget -q "https://dl.google.com/android/repository/commandlinetools-linux-{ANDROID_CMDLINE_TOOLS_VERSION}_latest.zip" -O /tmp/android-sdk.zip && \\\n'
+        "    unzip -q /tmp/android-sdk.zip -d ${ANDROID_HOME}/cmdline-tools && \\\n"
+        "    mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest && \\\n"
+        "    rm /tmp/android-sdk.zip\n"
+        "RUN yes | sdkmanager --licenses > /dev/null && \\\n"
+        f'    sdkmanager "platform-tools" "platforms;android-{sdk}" "build-tools;{sdk}.0.0"\n'
+    )
 
 
 class BuildManager:
@@ -125,13 +269,28 @@ def get_base_image_name(repo_url: str) -> str:
 
 
 def prune_git_history_script(
-    commit_sha: str, remove_items: Optional[List[str]] = None
+    commit_sha: str,
+    remove_items: Optional[List[str]] = None,
+    strip_extra_refs: bool = False,
 ) -> str:
-    """Generates shell commands to prune git repository history and remove sensitive paths."""
+    """Generates shell commands to prune git repository history and remove sensitive paths.
+
+    strip_extra_refs deletes refs outside refs/heads and refs/tags. A staged clone copied into
+    the image can carry refs the author fetched locally (refs/bench/after and the like), and
+    `git branch -D` does not touch those, so the after commit would stay reachable.
+    """
+    extra_refs = (
+        "    git for-each-ref --format='%(refname)' \\\n"
+        "        | grep -v -e '^refs/heads/' -e '^refs/tags/' \\\n"
+        "        | xargs -r -n 1 git update-ref -d || true && \\\n"
+        if strip_extra_refs
+        else ""
+    )
     base = (
         f"git reset --hard {commit_sha} && \\\n"
         f"    git clean -fd && \\\n"
         f"    git remote remove origin || true && \\\n"
+        f"{extra_refs}"
         f"    git branch | grep -v '*' | xargs git branch -D || true && \\\n"
         f"    TARGET_TIMESTAMP=$(git show -s --format=%ct {commit_sha}) && \\\n"
         f"    git tag -l | while read tag; do \\\n"
@@ -164,11 +323,18 @@ def prune_git_history_script(
 
 
 def is_file_skipped(path: Path) -> bool:
+    """True when a hand-written file opts out of regeneration.
+
+    Scans the first few lines, not only the first: canary_check.py prepends its two-line block
+    at the top of the file, which pushes a first-line marker down.
+    """
     if path.is_file():
         try:
-            first_line = path.read_text().splitlines()[0]
-            return "SKIP_GENERATE" in first_line or (
-                "PRESERVE_DOCKERFILE" in first_line and path.name == "Dockerfile"
+            head = path.read_text().splitlines()[:5]
+            return any(
+                "SKIP_GENERATE" in line
+                or ("PRESERVE_DOCKERFILE" in line and path.name == "Dockerfile")
+                for line in head
             )
         except Exception:
             pass
@@ -233,6 +399,18 @@ def derive_base_image_name(repo_url: str) -> str:
     return f"{owner}-{repo}-base".lower()
 
 
+def parse_from_line(line: str) -> Optional[str]:
+    """Extracts the image from a FROM line, dropping flags (--platform=...) and an AS alias."""
+    tokens = line.split()[1:]
+    for i, token in enumerate(tokens):
+        if token.startswith("--"):
+            continue
+        if token.upper() == "AS":
+            break
+        return token
+    return None
+
+
 def get_original_base_image(task_dir: Path, default_tag: str) -> str:
     df_path = (task_dir / "environment" / "Dockerfile").resolve()
     try:
@@ -249,7 +427,9 @@ def get_original_base_image(task_dir: Path, default_tag: str) -> str:
         )
         for line in original_content.splitlines():
             if line.startswith("FROM "):
-                return line.split(" ", 1)[1].strip()
+                image = parse_from_line(line)
+                if image:
+                    return image
     except Exception:
         pass
 
@@ -257,7 +437,9 @@ def get_original_base_image(task_dir: Path, default_tag: str) -> str:
         try:
             for line in df_path.read_text().splitlines():
                 if line.startswith("FROM "):
-                    return line.split(" ", 1)[1].strip()
+                    image = parse_from_line(line)
+                    if image:
+                        return image
         except Exception:
             pass
 
@@ -288,6 +470,11 @@ def generate_task_dockerfile(
 
     base_task_dir = task_dir.parent / base_task_name
 
+    # Regeneration overwrites the file; the canary block at the top has to survive it.
+    existing_header = (
+        leading_comment_block(df_path.read_text()) if df_path.is_file() else ""
+    )
+
     if is_file_skipped(df_path):
         rprint(
             f"[yellow][WARNING][/yellow] \\[{task_id}] Dockerfile marked with # SKIP_GENERATE. Skipping re-generation."
@@ -303,7 +490,7 @@ def generate_task_dockerfile(
                 pass
         base_img_tag = get_docker_image_tag(base_task_name, b_data)
 
-        content = f"FROM {base_img_tag}\n"
+        content = existing_header + from_line(base_img_tag)
         df_path.write_text(content)
         logger.info(f"Generated variant Dockerfile: {df_path}")
     else:
@@ -340,7 +527,7 @@ def generate_task_dockerfile(
         ):
             repo_url = f"https://github.com/{repo_url}"
 
-        default_tag = f"{get_docker_registry()}/android-bench-env:latest"
+        default_tag = get_default_base_image()
         original_from = get_original_base_image(task_dir, default_tag)
 
         # Resolve self-referential task image tags to their corresponding base image tags
@@ -349,27 +536,38 @@ def generate_task_dockerfile(
             original_from = derive_base_image_name(repo_url)
 
         if original_from == "android-bench-env":
-            base_img_tag = default_tag
-        elif "/" not in original_from:
-            tag = ":latest" if ":" not in original_from else ""
-            base_img_tag = f"{get_docker_registry()}/{original_from}{tag}"
+            # Pinned to its own registry: this image is published by android-bench, wherever
+            # the task images built from it happen to be tagged.
+            base_img_tag = f"{ANDROID_BENCH_REGISTRY}/android-bench-env:latest"
+        elif "/" not in original_from and ":" not in original_from:
+            # A bare, untagged name is one of our own locally built base images
+            # (android-bench-env, <owner>-<repo>-base). A public image such as
+            # "ubuntu:22.04" carries a tag and must never be registry-prefixed.
+            base_img_tag = f"{get_docker_registry()}/{original_from}:latest"
         else:
             base_img_tag = original_from
 
-        is_custom_base = (
-            base_img_tag != default_tag and "android-bench-env" not in base_img_tag
-        )
+        base_name = base_img_tag.split(":")[0].rsplit("/", 1)[-1]
+        # Prebuilt <owner>-<repo>-base images already contain the checked out repository;
+        # every other base, ours or public, still needs the repo staged into it.
+        repo_baked_into_base = base_name.endswith("-base")
+        # Bases that already ship the JDK and Android SDK. Anything else gets them installed here.
+        toolchain_in_base = repo_baked_into_base or base_name == "android-bench-env"
+
         env_cfg = task_data.get("environment", {})
         setup_cmds = cmds.get("docker_setup") or env_cfg.get("setup_commands") or []
 
-        content = (
-            f"FROM {base_img_tag}\n"
-            f"ENV JAVA_HOME=/usr/lib/jvm/java-{java_ver}-openjdk-amd64\n"
-        )
+        content = existing_header + from_line(base_img_tag)
+        content += f"ENV JAVA_HOME=/usr/lib/jvm/java-{java_ver}-openjdk-amd64\n"
+        if not toolchain_in_base:
+            content += android_toolchain_script(
+                java_ver, before_commit.get("target_sdk", DEFAULT_TARGET_SDK)
+            )
+
         staged_repo = get_staged_repo_dir(task_dir)
         staged_rel = os.path.relpath(staged_repo, task_dir)
 
-        if is_custom_base:
+        if repo_baked_into_base:
             content += "WORKDIR /workspace/testbed\n"
         elif is_private_repo(repo_url, task_data):
             content += (
@@ -377,17 +575,27 @@ def generate_task_dockerfile(
                 "WORKDIR /workspace/testbed\n"
             )
         else:
+            # The commit is named in the clone layer on purpose: Docker caches `git clone` on
+            # its text alone, so after the before commit moves upstream a cached clone would
+            # silently lack it and the checkout below would fail on a stale layer.
             content += (
-                f"RUN git clone {repo_url} /workspace/testbed\n"
+                f"RUN git clone {repo_url} /workspace/testbed && \\\n"
+                f"    git -C /workspace/testbed cat-file -e {commit_sha}^{{commit}}\n"
                 "WORKDIR /workspace/testbed\n"
             )
 
-        content += f'ENV GRADLE_OPTS="-Xmx6g"\n' f"RUN pip install tomli\n"
+        content += gradle_opts_line(task_data)
+        content += gradle_memory_properties(task_data)
+        content += "RUN pip install tomli\n"
         for cmd in setup_cmds:
             if cmd and cmd.strip():
                 content += f"RUN {cmd.strip()}\n"
 
-        prune_script = prune_git_history_script(commit_sha, remove_items)
+        prune_script = prune_git_history_script(
+            commit_sha,
+            remove_items,
+            strip_extra_refs=is_private_repo(repo_url, task_data),
+        )
         if prune_script:
             content += f"RUN {prune_script}\n"
 
@@ -402,6 +610,7 @@ def generate_task_dockerfile(
         content += "RUN echo 'build/' >> .git/info/exclude\n"
 
         if joined_build:
+            content += gradle_wrapper_prefetch(before_build + build_cmds)
             content += f"RUN {joined_build}\n"
 
         df_path.write_text(content)
@@ -412,17 +621,42 @@ def generate_task_dockerfile(
             f"[yellow][WARNING][/yellow] \\[{task_id}] docker-compose.yaml marked with # SKIP_GENERATE. Skipping re-generation."
         )
     else:
-        volumes_str = "      - ../../../utils/agent:/utils:ro\n"
+        volumes_str = "      - ../task.toml:/task.toml\n"
         entrypoint_str = ""
+
+        # utils/agent is android-bench harness infrastructure and is absent from the community
+        # dataset. Mounting a path that does not exist makes `docker compose up` fail outright.
+        utils_dir = task_dir.parent.parent / "utils" / "agent"
+        has_utils = utils_dir.is_dir()
+        if has_utils:
+            volumes_str += "      - ../../../utils/agent:/utils:ro\n"
 
         if is_variant_task:
             if (task_dir / "tests" / "test.patch").is_file():
                 volumes_str += "      - ../tests/test.patch:/tmp/open_test.patch:ro\n"
-                entrypoint_str = (
-                    '    entrypoint: ["bash", "/utils/open-tests-entrypoint.sh"]\n'
-                )
+                if has_utils:
+                    entrypoint_str = (
+                        '    entrypoint: ["bash", "/utils/open-tests-entrypoint.sh"]\n'
+                    )
+                else:
+                    rprint(
+                        f"[yellow][WARNING][/yellow] \\[{task_id}] utils/agent not found; open-tests entrypoint omitted."
+                    )
             if (task_dir / "tests" / "open").is_dir():
                 volumes_str += "      - ../tests/open/:/workspace/validate/:ro\n"
+
+        # /dev/kvm is only needed by tasks that boot an emulator, and requesting a device the
+        # host lacks makes `docker compose up` fail outright -- fatal under Harbor, which runs
+        # `up --wait` itself. Emit it only when the task declares instrumented tests.
+        task_cmds = task_data.get("commands", {}) or {}
+        needs_emulator = bool(task_cmds.get("android_test")) or bool(
+            task_data.get("environment", {}).get("requires_kvm")
+        )
+        emulator_block = (
+            '    devices:\n      - "/dev/kvm"\n    environment:\n      - EMULATOR_NAME\n'
+            if needs_emulator
+            else ""
+        )
 
         compose_content = (
             "services:\n"
@@ -431,10 +665,7 @@ def generate_task_dockerfile(
             "      context: ..\n"
             "      dockerfile: environment/Dockerfile\n"
             "    init: true\n"
-            "    devices:\n"
-            '      - "/dev/kvm"\n'
-            "    environment:\n"
-            "      - EMULATOR_NAME\n"
+            f"{emulator_block}"
             "    volumes:\n"
             f"{volumes_str}"
             f"{entrypoint_str}"
@@ -473,9 +704,19 @@ def verify_container_runtime_initialization(
         if up_proc.returncode != 0:
             if up_proc.stdout:
                 lines.append(f"{up_proc.stdout}\n")
-            raise subprocess.CalledProcessError(
-                up_proc.returncode, up_cmd, output="".join(lines)
-            )
+            # /dev/kvm is absent on macOS and on any host without nested virtualization. The
+            # compose file is written for the eval runners, which do have it, so this is a
+            # property of the machine running the build, not a fault in the task.
+            if "/dev/kvm" in (up_proc.stdout or "") and "no such file" in (
+                up_proc.stdout or ""
+            ):
+                rprint(
+                    f"[yellow][WARNING][/yellow] \\[{target_tag}] Host has no /dev/kvm; skipped compose runtime check. The image itself built successfully."
+                )
+            else:
+                raise subprocess.CalledProcessError(
+                    up_proc.returncode, up_cmd, output="".join(lines)
+                )
     finally:
         down_cmd = [
             "docker",
@@ -645,7 +886,8 @@ def main_with_args(args: argparse.Namespace) -> None:
             generate_task_dockerfile(t_id, t_path, t_data)
 
     # 3. Build (Using environment/ directory as context for COPY staged-repo)
-    if args.build:
+    # Only relevant when tasks actually build on the private android-bench base image.
+    if args.build and "android-bench-env" in get_default_base_image():
         try:
             if not docker_image_exists("android-bench-env:latest"):
                 logger.info(

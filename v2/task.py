@@ -62,7 +62,7 @@ def main() -> None:
         help="Calculate pristine solution.patch and test.patch goldens",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    add_common_task_args(refresh_parser)
+    refresh_patches.add_arguments(refresh_parser)
 
     # 4. verify-tests
     verify_parser = subparsers.add_parser(

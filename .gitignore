@@ -13,13 +13,43 @@ venv.bak/
 *.sublime-project
 *.sublime-workspace
 .zed
-.claude
+
+# Coding-agent configuration. Personal to whoever is working here -- model choices,
+# permissions, API keys, session logs. Never part of a contribution.
+# Skills that ship with this repo live in skills/ and are installed by symlink;
+# see skills/README.md.
+.claude/
+.agents/
+.codex/
+.cursor/
+.gemini/
+.windsurf/
+.continue/
+.opencode/
+.goose/
+.roo/
+.kiro/
+.junie/
+.amp/
+.factory/
+.trae/
+.aider*
+.cursorrules
+.clinerules
+.mcp.json
+CLAUDE.md
+GEMINI.md
+CONVENTIONS.md
 
 # Log files
 *.log
 out
 
 tasks/*.jsonl
+
+# Local clone used to diff before/after commits; never part of a task submission
+tasks/*/environment/staged-repo/
+tasks/*/environment/staged-git-repo/
 
 trials/
 
@@ -28,3 +58,6 @@ trials/
 __pycache__/
 *.pyc
 uv.lock
+
+# Author-local paths to clones holding the unpublished after state
+tasks/*/.local-source
