@@ -10,16 +10,9 @@ on:
     paths:
       - "tasks/**"
       - "examples/**"
-  issue_comment:
-    types: [created]
 
 concurrency:
-  # Non-`/validate` (or `/validate-task`) comments get a per-run group so they don't cancel in-flight runs.
-  # Real triggers (push, `/validate` or `/validate-task` comment) share `validate-<PR>` and cancel each other.
-  group: >-
-    ${{ (github.event_name == 'issue_comment' && !contains(github.event.comment.body, '/validate') && !contains(github.event.comment.body, '/validate-task'))
-        && format('validate-noop-{0}', github.run_id)
-        || format('validate-{0}', github.event.pull_request.number || github.event.issue.number) }}
+  group: validate-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -35,29 +28,12 @@ jobs:
       - name: Check trigger conditions
         id: check
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          COMMENT_BODY: ${{ github.event.comment.body }}
-          ISSUE_PR_URL: ${{ github.event.issue.pull_request.html_url }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-            echo "overrides=" >> $GITHUB_OUTPUT
-            echo "Auto-triggered on PR event"
-          elif [[ -n "$ISSUE_PR_URL" ]] && { [[ "$COMMENT_BODY" == *"/validate"* ]] || [[ "$COMMENT_BODY" == *"/validate-task"* ]]; }; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "pr_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
-            {
-              echo "overrides<<OVERRIDES_EOF"
-              echo "$COMMENT_BODY"
-              echo "OVERRIDES_EOF"
-            } >> $GITHUB_OUTPUT
-            echo "Manual trigger via comment"
-          else
-            echo "should_run=false" >> $GITHUB_OUTPUT
-          fi
+          echo "should_run=true" >> $GITHUB_OUTPUT
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "overrides=" >> $GITHUB_OUTPUT
+          echo "Auto-triggered on PR event"
 
   parse-config:
     needs: check-trigger
@@ -140,25 +116,6 @@ jobs:
             echo "Detected tasks: $TASKS"
           fi
 
-  acknowledge:
-    needs: [check-trigger, detect-tasks]
-    if: >-
-      github.event_name == 'issue_comment'
-      && needs.check-trigger.outputs.should_run == 'true'
-      && needs.detect-tasks.outputs.has_tasks == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Add reaction
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          COMMENT_ID: ${{ github.event.comment.id }}
-        run: |
-          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}/reactions" \
-            -f content='eyes' || true
-
   post-placeholder:
     needs: [check-trigger, detect-tasks]
     if: needs.detect-tasks.outputs.has_tasks == 'true'
@@ -202,17 +159,6 @@ jobs:
         task: ${{ fromJson(needs.detect-tasks.outputs.tasks) }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Overlay PR files onto main
-        if: github.event_name == 'issue_comment'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ needs.check-trigger.outputs.pr_number }}
-        run: |
-          git fetch origin "pull/${PR_NUMBER}/head"
-          PR_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid')
-          # Overlay everything from the PR except the .github directory
-          git checkout "$PR_SHA" -- . ':!.github'
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -262,17 +208,6 @@ jobs:
         task: ${{ fromJson(needs.detect-tasks.outputs.tasks) }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Overlay PR files onto main
-        if: github.event_name == 'issue_comment'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ needs.check-trigger.outputs.pr_number }}
-        run: |
-          git fetch origin "pull/${PR_NUMBER}/head"
-          PR_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid')
-          # Overlay everything from the PR except the .github directory
-          git checkout "$PR_SHA" -- . ':!.github'
 
       - name: Set up Python
         uses: actions/setup-python@v5
