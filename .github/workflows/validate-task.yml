@@ -133,8 +133,7 @@ jobs:
           TASKS=$(echo "$TASK_FILES" | \
             cut -d'/' -f1-2 | \
             sort -u | \
-            jq -R -s -c 'split("\n") | map(select(length > 0))
-            ')
+            jq -R -s -c 'split("\n") | map(select(length > 0))')
 
           echo "tasks=$TASKS" >> $GITHUB_OUTPUT
 
@@ -169,6 +168,9 @@ jobs:
     needs: [check-trigger, detect-tasks]
     if: needs.detect-tasks.outputs.has_tasks == 'true'
     runs-on: ubuntu-latest
+    # A fork PR's GITHUB_TOKEN is read-only, so commenting fails with
+    # "Resource not accessible by integration". Never let that block validation.
+    continue-on-error: true
     permissions:
       pull-requests: write
     steps:
@@ -461,6 +463,8 @@ jobs:
     needs: [check-trigger, detect-tasks, execution-checks]
     if: always() && needs.detect-tasks.outputs.has_tasks == 'true'
     runs-on: ubuntu-latest
+    # Same read-only-token caveat as post-placeholder: report, never gate.
+    continue-on-error: true
     permissions:
       pull-requests: write
     steps:
