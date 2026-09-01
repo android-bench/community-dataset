@@ -166,7 +166,10 @@ jobs:
 
   post-placeholder:
     needs: [check-trigger, detect-tasks]
-    if: needs.detect-tasks.outputs.has_tasks == 'true'
+    if: >-
+      needs.detect-tasks.outputs.has_tasks == 'true'
+      && (github.event_name == 'issue_comment'
+          || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     # A fork PR's GITHUB_TOKEN is read-only, so commenting fails with
     # "Resource not accessible by integration". Never let that block validation.
@@ -192,7 +195,7 @@ jobs:
 
       - name: Post placeholder sticky comment
         # zizmor: ignore[unpinned-uses]
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: task-validation
           number: ${{ needs.check-trigger.outputs.pr_number }}
@@ -253,7 +256,7 @@ jobs:
           path: canary-results/
 
   execution-checks:
-    needs: [check-trigger, detect-tasks, parse-config, post-placeholder, canary-check]
+    needs: [check-trigger, detect-tasks, parse-config, canary-check]
     if: needs.detect-tasks.outputs.has_tasks == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -461,7 +464,10 @@ jobs:
 
   post-comment:
     needs: [check-trigger, detect-tasks, execution-checks]
-    if: always() && needs.detect-tasks.outputs.has_tasks == 'true'
+    if: >-
+      always() && needs.detect-tasks.outputs.has_tasks == 'true'
+      && (github.event_name == 'issue_comment'
+          || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     # Same read-only-token caveat as post-placeholder: report, never gate.
     continue-on-error: true
@@ -570,7 +576,7 @@ jobs:
 
       - name: Post or update comment
         # zizmor: ignore[unpinned-uses]
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: task-validation
           path: comment.md
