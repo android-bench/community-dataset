@@ -8,6 +8,8 @@ on:
   # zizmor: ignore[dangerous-triggers, target-of-sandwich]
   pull_request_target:
     types: [opened, ready_for_review, synchronize, reopened]
+    branches:
+      - main
     paths:
       - "tasks/**"
       - "examples/**"
