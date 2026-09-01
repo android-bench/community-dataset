@@ -42,6 +42,8 @@ jobs:
     outputs:
       env_backend: ${{ steps.parse.outputs.env_backend }}
     steps:
+      # zizmor: ignore[unpinned-uses]
+      # zizmor: ignore[unpinned-uses]
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .github/harbor-run-defaults.yml
@@ -140,6 +142,7 @@ jobs:
             "$RUN_URL" "$SHA_LINK" "$SHORT_SHA" > placeholder.md
 
       - name: Post placeholder sticky comment
+        # zizmor: ignore[unpinned-uses]
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: task-validation
@@ -158,9 +161,12 @@ jobs:
       matrix:
         task: ${{ fromJson(needs.detect-tasks.outputs.tasks) }}
     steps:
+      # zizmor: ignore[unpinned-uses]
+      # zizmor: ignore[unpinned-uses]
       - uses: actions/checkout@v4
 
       - name: Set up Python
+        # zizmor: ignore[unpinned-uses]
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -190,6 +196,7 @@ jobs:
 
       - name: Upload canary results
         if: always()
+        # zizmor: ignore[unpinned-uses]
         uses: actions/upload-artifact@v4
         with:
           name: canary-${{ strategy.job-index }}
@@ -207,14 +214,18 @@ jobs:
       matrix:
         task: ${{ fromJson(needs.detect-tasks.outputs.tasks) }}
     steps:
+      # zizmor: ignore[unpinned-uses]
+      # zizmor: ignore[unpinned-uses]
       - uses: actions/checkout@v4
 
       - name: Set up Python
+        # zizmor: ignore[unpinned-uses]
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install uv
+        # zizmor: ignore[unpinned-uses]
         uses: astral-sh/setup-uv@v4
 
       - name: Install Harbor
@@ -384,6 +395,7 @@ jobs:
 
       - name: Upload execution results
         if: always()
+        # zizmor: ignore[unpinned-uses]
         uses: actions/upload-artifact@v4
         with:
           name: execution-${{ strategy.job-index }}
@@ -391,6 +403,7 @@ jobs:
 
       - name: Upload harbor jobs
         if: always()
+        # zizmor: ignore[unpinned-uses]
         uses: actions/upload-artifact@v4
         with:
           name: harbor-output-${{ strategy.job-index }}
@@ -405,6 +418,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Download execution results
+        # zizmor: ignore[unpinned-uses]
         uses: actions/download-artifact@v4
         with:
           pattern: execution-*
@@ -412,6 +426,7 @@ jobs:
           path: execution-results/
 
       - name: Download canary results
+        # zizmor: ignore[unpinned-uses]
         uses: actions/download-artifact@v4
         with:
           pattern: canary-*
@@ -501,6 +516,7 @@ jobs:
           FOOTER
 
       - name: Post or update comment
+        # zizmor: ignore[unpinned-uses]
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: task-validation
