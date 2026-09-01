@@ -6,7 +6,7 @@ name: Validate Task
 
 on:
   # zizmor: ignore[dangerous-triggers, target-of-sandwich]
-  pull_request_target:
+  pull_request:
     types: [opened, ready_for_review, synchronize, reopened]
     branches:
       - main
@@ -44,7 +44,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
             echo "should_run=true" >> $GITHUB_OUTPUT
             echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
             echo "overrides=" >> $GITHUB_OUTPUT
@@ -128,11 +128,13 @@ jobs:
           echo "Files in PR:"
           echo "$FILES"
           
-          TASKS=$(echo "$FILES" | \
-            grep -E '^(tasks|examples)/' | \
+          TASK_FILES=$(echo "$FILES" | \
+            grep -E '^(tasks|examples)/' || true)
+          TASKS=$(echo "$TASK_FILES" | \
             cut -d'/' -f1-2 | \
             sort -u | \
-            jq -R -s -c 'split("\n") | map(select(length > 0))')
+            jq -R -s -c 'split("\n") | map(select(length > 0))
+            ')
 
           echo "tasks=$TASKS" >> $GITHUB_OUTPUT
 
@@ -164,8 +166,6 @@ jobs:
             -f content='eyes' || true
 
   post-placeholder:
-    permissions:
-      pull-requests: write
     needs: [check-trigger, detect-tasks]
     if: needs.detect-tasks.outputs.has_tasks == 'true'
     runs-on: ubuntu-latest
@@ -211,16 +211,6 @@ jobs:
       # zizmor: ignore[unpinned-uses]
       - uses: actions/checkout@v4
 
-      - name: Overlay PR files onto main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ needs.check-trigger.outputs.pr_number }}
-        run: |
-          git fetch origin "pull/${PR_NUMBER}/head"
-          PR_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid')
-          # Overlay everything from the PR except the .github directory
-          git checkout "$PR_SHA" -- . ':!.github'
-
       - name: Set up Python
         # zizmor: ignore[unpinned-uses]
         uses: actions/setup-python@v5
@@ -229,8 +219,10 @@ jobs:
 
       - name: Run canary check
         id: canary
+        env:
+          TASK_PATH: ${{ matrix.task }}
         run: |
-          if python3 ci_checks/canary_check.py "${{ matrix.task }}" --dry-run; then
+          if python3 ci_checks/canary_check.py "$TASK_PATH" --dry-run; then
             echo "success=true" >> $GITHUB_OUTPUT
           else
             echo "success=false" >> $GITHUB_OUTPUT
@@ -272,16 +264,6 @@ jobs:
     steps:
       # zizmor: ignore[unpinned-uses]
       - uses: actions/checkout@v4
-
-      - name: Overlay PR files onto main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ needs.check-trigger.outputs.pr_number }}
-        run: |
-          git fetch origin "pull/${PR_NUMBER}/head"
-          PR_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid -q '.headRefOid')
-          # Overlay everything from the PR except the .github directory
-          git checkout "$PR_SHA" -- . ':!.github'
 
       - name: Set up Python
         # zizmor: ignore[unpinned-uses]
@@ -345,7 +327,7 @@ jobs:
           if harbor run -p "$TASK_PATH" --agent oracle --env "$ENV_BACKEND" -o harbor-output --job-name "${{ github.run_id }}-oracle-${SAFE_TAG}" 2>&1 | tee oracle-output.log; then
             OUTPUT=$(cat oracle-output.log)
             # Harbor outputs "Mean: 1.000" - extract the numeric value
-            REWARD=$(echo "$OUTPUT" | grep -oP 'Mean[:\s]+\K[0-9.]+' | tail -1 || echo "0")
+            REWARD=$(echo "$OUTPUT" | python3 -c "import sys, re; match = re.search(r'Mean[:\s]+([0-9.]+)', sys.stdin.read()); print(match.group(1) if match else '0')" | tail -1 || echo "0")
             # Compare as floating point (1.000 == 1.0)
             if (( $(echo "$REWARD >= 1.0" | bc -l) )); then
               echo "✅ Oracle (solution) passes all tests (reward: $REWARD)" >> $GITHUB_STEP_SUMMARY
@@ -401,7 +383,7 @@ jobs:
           if harbor run -p "$TASK_PATH" --agent nop --env "$ENV_BACKEND" -o harbor-output --job-name "${{ github.run_id }}-nop-${SAFE_TAG}" 2>&1 | tee nop-output.log; then
             OUTPUT=$(cat nop-output.log)
             # Harbor outputs "Mean: 0.000" - extract the numeric value
-            REWARD=$(echo "$OUTPUT" | grep -oP 'Mean[:\s]+\K[0-9.]+' | tail -1 || echo "")
+            REWARD=$(echo "$OUTPUT" | python3 -c "import sys, re; match = re.search(r'Mean[:\s]+([0-9.]+)', sys.stdin.read()); print(match.group(1) if match else '')" | tail -1 || echo "")
             if [ -z "$REWARD" ]; then
               echo "❌ Nop validation: could not parse reward from harbor output" >> $GITHUB_STEP_SUMMARY
               echo "success=false" >> $GITHUB_OUTPUT
@@ -476,8 +458,6 @@ jobs:
           if-no-files-found: ignore
 
   post-comment:
-    permissions:
-      pull-requests: write
     needs: [check-trigger, detect-tasks, execution-checks]
     if: always() && needs.detect-tasks.outputs.has_tasks == 'true'
     runs-on: ubuntu-latest
@@ -487,6 +467,7 @@ jobs:
       - name: Download execution results
         # zizmor: ignore[unpinned-uses]
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           pattern: execution-*
           merge-multiple: true
@@ -495,6 +476,7 @@ jobs:
       - name: Download canary results
         # zizmor: ignore[unpinned-uses]
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           pattern: canary-*
           merge-multiple: true
