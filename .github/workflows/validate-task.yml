@@ -162,6 +162,8 @@ jobs:
             -f content='eyes' || true
 
   post-placeholder:
+    permissions:
+      pull-requests: write
     needs: [check-trigger, detect-tasks]
     if: needs.detect-tasks.outputs.has_tasks == 'true'
     runs-on: ubuntu-latest
@@ -472,6 +474,8 @@ jobs:
           if-no-files-found: ignore
 
   post-comment:
+    permissions:
+      pull-requests: write
     needs: [check-trigger, detect-tasks, execution-checks]
     if: always() && needs.detect-tasks.outputs.has_tasks == 'true'
     runs-on: ubuntu-latest
